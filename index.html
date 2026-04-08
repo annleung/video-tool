@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>视频转序列帧工具</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0f0f17; color: #e0e0e0;
+    font-family: -apple-system, 'PingFang SC', sans-serif;
+    min-height: 100vh; padding: 32px 20px;
+  }
+  h1 { font-size: 18px; font-weight: 500; color: #fff; margin-bottom: 4px; }
+  .sub { font-size: 13px; color: rgba(255,255,255,0.35); margin-bottom: 28px; }
+
+  #drop-zone {
+    border: 1px dashed rgba(255,255,255,0.15); border-radius: 12px;
+    padding: 40px 20px; text-align: center; cursor: pointer;
+    transition: all 0.2s; margin-bottom: 20px; position: relative;
+  }
+  #drop-zone:hover, #drop-zone.over {
+    border-color: rgba(160,100,255,0.5); background: rgba(160,100,255,0.05);
+  }
+  #drop-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+  #drop-zone p { font-size: 14px; color: rgba(255,255,255,0.4); }
+  #drop-zone .icon { font-size: 32px; margin-bottom: 10px; }
+  #file-name { font-size: 13px; color: rgba(160,130,255,0.9); margin-top: 8px; }
+
+  .settings { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .setting-item {
+    background: rgba(255,255,255,0.04); border: 0.5px solid rgba(255,255,255,0.08);
+    border-radius: 10px; padding: 14px;
+  }
+  .setting-item label {
+    display: block; font-size: 11px; color: rgba(255,255,255,0.35);
+    margin-bottom: 8px; letter-spacing: 0.05em; text-transform: uppercase;
+  }
+  .setting-item select, .setting-item input[type=number] {
+    width: 100%; background: rgba(255,255,255,0.06);
+    border: 0.5px solid rgba(255,255,255,0.12);
+    border-radius: 6px; color: #fff; font-size: 14px; padding: 8px 10px; outline: none;
+  }
+
+  .compress-section {
+    background: rgba(255,255,255,0.04); border: 0.5px solid rgba(255,255,255,0.08);
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;
+  }
+  .compress-header { display: flex; align-items: center; justify-content: space-between; }
+  .compress-header label {
+    font-size: 11px; color: rgba(255,255,255,0.35);
+    letter-spacing: 0.05em; text-transform: uppercase;
+  }
+  .toggle-wrap { display: flex; align-items: center; gap: 8px; }
+  .toggle {
+    position: relative; width: 36px; height: 20px;
+    background: rgba(255,255,255,0.1); border-radius: 10px;
+    cursor: pointer; transition: background 0.2s;
+  }
+  .toggle.on { background: rgba(100,180,255,0.5); }
+  .toggle-knob {
+    position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; transition: left 0.2s;
+  }
+  .toggle.on .toggle-knob { left: 18px; }
+  .toggle-label { font-size: 13px; color: rgba(255,255,255,0.5); }
+
+  .compress-options { display: none; margin-top: 14px; gap: 12px; flex-direction: column; }
+  .compress-options.visible { display: flex; }
+
+  .compress-row { display: flex; align-items: center; gap: 12px; }
+  .compress-row label { font-size: 12px; color: rgba(255,255,255,0.4); min-width: 60px; }
+  .compress-row input[type=range] { flex: 1; }
+  .compress-row span { font-size: 12px; color: rgba(100,180,255,0.8); font-weight: 500; min-width: 40px; text-align: right; }
+
+  .format-tabs { display: flex; gap: 6px; margin-top: 4px; }
+  .fmt-btn {
+    flex: 1; padding: 7px; background: rgba(255,255,255,0.04);
+    border: 0.5px solid rgba(255,255,255,0.1); border-radius: 6px;
+    color: rgba(255,255,255,0.4); font-size: 12px; cursor: pointer;
+    text-align: center; transition: all 0.15s;
+  }
+  .fmt-btn.active {
+    background: rgba(100,180,255,0.15); border-color: rgba(100,180,255,0.35);
+    color: rgba(130,200,255,0.9);
+  }
+  .fmt-sub { font-size: 10px; opacity: 0.6; display: block; }
+  .compress-note { font-size: 11px; color: rgba(255,255,255,0.2); line-height: 1.6; margin-top: 4px; }
+  .size-preview { font-size: 12px; color: rgba(100,220,140,0.8); min-height: 18px; }
+
+  .tip-box {
+    background: rgba(255,200,80,0.06); border: 0.5px solid rgba(255,200,80,0.15);
+    border-radius: 10px; padding: 12px 14px; font-size: 13px;
+    color: rgba(255,200,80,0.7); line-height: 1.6; margin-bottom: 20px;
+  }
+  .tip-box strong { color: rgba(255,200,80,0.95); }
+
+  #extract-btn {
+    width: 100%; padding: 14px; background: rgba(160,100,255,0.2);
+    border: 0.5px solid rgba(160,100,255,0.4); border-radius: 10px;
+    color: rgba(180,140,255,0.95); font-size: 15px; font-weight: 500;
+    cursor: pointer; transition: all 0.2s; margin-bottom: 12px; letter-spacing: 0.03em;
+  }
+  #extract-btn:hover:not(:disabled) { background: rgba(160,100,255,0.32); border-color: rgba(160,100,255,0.6); }
+  #extract-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  #progress-wrap { display: none; margin-bottom: 20px; }
+  #progress-bar-bg { height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; margin-bottom: 8px; }
+  #progress-bar { height: 100%; background: linear-gradient(90deg,#8040ff,#c080ff); border-radius: 2px; width: 0%; transition: width 0.1s; }
+  #progress-text { font-size: 12px; color: rgba(255,255,255,0.35); text-align: center; }
+
+  #preview-section { display: none; }
+  .preview-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .preview-header span { font-size: 13px; color: rgba(255,255,255,0.4); }
+  #download-all-btn {
+    font-size: 12px; padding: 6px 16px; background: rgba(80,200,120,0.15);
+    border: 0.5px solid rgba(80,200,120,0.3); border-radius: 6px;
+    color: rgba(100,220,140,0.9); cursor: pointer; transition: all 0.15s;
+  }
+  #download-all-btn:hover { background: rgba(80,200,120,0.25); }
+
+  #frames-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(80px,1fr)); gap: 8px; margin-bottom: 20px; }
+  .frame-item {
+    position: relative; aspect-ratio: 1; border-radius: 8px; overflow: hidden;
+    background: rgba(255,255,255,0.04); border: 0.5px solid rgba(255,255,255,0.08);
+    cursor: pointer; transition: border-color 0.15s;
+  }
+  .frame-item:hover { border-color: rgba(160,100,255,0.4); }
+  .frame-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .frame-item .frame-num {
+    position: absolute; bottom: 3px; left: 0; right: 0; text-align: center;
+    font-size: 10px; color: rgba(255,255,255,0.5); background: rgba(0,0,0,0.4); padding: 1px 0;
+  }
+
+  #bg-remove-section { display: none; margin-top: 16px; }
+  .remove-btn {
+    width: 100%; padding: 12px; background: rgba(255,160,80,0.12);
+    border: 0.5px solid rgba(255,160,80,0.25); border-radius: 10px;
+    color: rgba(255,180,100,0.9); font-size: 14px; cursor: pointer;
+    transition: all 0.2s; margin-bottom: 8px;
+  }
+  .remove-btn:hover { background: rgba(255,160,80,0.22); }
+  .remove-note { font-size: 12px; color: rgba(255,255,255,0.25); text-align: center; line-height: 1.5; }
+
+  video#work-video { display: none; }
+  canvas#work-canvas { display: none; }
+  canvas#compress-canvas { display: none; }
+</style>
+</head>
+<body>
+
+<h1>视频转序列帧</h1>
+<p class="sub">上传即梦旋转视频，自动拆帧 → 压缩 → 下载序列图</p>
+
+<div id="drop-zone">
+  <input type="file" accept="video/*" onchange="handleFile(this)">
+  <div class="icon">🎬</div>
+  <p>点击或拖拽视频文件到这里</p>
+  <p style="font-size:12px;margin-top:6px;color:rgba(255,255,255,0.2)">支持 MP4 / MOV / WebM</p>
+  <p id="file-name"></p>
+</div>
+
+<div class="settings">
+  <div class="setting-item">
+    <label>提取帧数</label>
+    <select id="frame-count">
+      <option value="12">12帧（每30°）</option>
+      <option value="24" selected>24帧（每15°，推荐）</option>
+      <option value="36">36帧（每10°）</option>
+      <option value="72">72帧（每5°，最流畅）</option>
+      <option value="custom">自定义</option>
+      <option value="custom">自定义</option>
+    </select>
+  </div>
+  <div class="setting-item">
+    <label>输出尺寸</label>
+    <select id="output-size" onchange="updateSizePreview()">
+      <option value="300">300 × 300（嵌入/小图）</option>
+      <option value="512">512 × 512</option>
+      <option value="800" selected>800 × 800（推荐）</option>
+      <option value="1024">1024 × 1024</option>
+    </select>
+  </div>
+  <div class="setting-item" id="custom-count-wrap" style="display:none">
+    <label>自定义帧数</label>
+    <input type="number" id="custom-count" value="18" min="4" max="120">
+  </div>
+  <div class="setting-item">
+    <label>背景处理</label>
+    <select id="bg-mode">
+      <option value="keep">保留原背景</option>
+      <option value="remove-dark" selected>去除深色背景（黑色）</option>
+      <option value="remove-light">去除浅色背景（白色）</option>
+    </select>
+  </div>
+</div>
+
+<div class="compress-section">
+  <div class="compress-header">
+    <label>图片压缩</label>
+    <div class="toggle-wrap">
+      <div class="toggle" id="compress-toggle" onclick="toggleCompress()">
+        <div class="toggle-knob"></div>
+      </div>
+      <span class="toggle-label" id="compress-label">关闭</span>
+    </div>
+  </div>
+  <div class="compress-options" id="compress-options">
+    <div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">输出格式</div>
+      <div class="format-tabs">
+        <div class="fmt-btn active" onclick="setFormat('webp',this)">
+          WebP<span class="fmt-sub">透明+最小</span>
+        </div>
+        <div class="fmt-btn" onclick="setFormat('png',this)">
+          PNG<span class="fmt-sub">无损</span>
+        </div>
+        <div class="fmt-btn" onclick="setFormat('jpeg',this)">
+          JPEG<span class="fmt-sub">最小/不透明</span>
+        </div>
+      </div>
+    </div>
+    <div class="compress-row" id="quality-row">
+      <label>压缩质量</label>
+      <input type="range" min="50" max="100" value="85" step="1" id="quality-slider"
+        oninput="document.getElementById('quality-val').textContent=this.value+'%';updateSizePreview()">
+      <span id="quality-val">85%</span>
+    </div>
+    <div class="compress-row">
+      <label>缩放比例</label>
+      <input type="range" min="25" max="100" value="100" step="5" id="resize-slider"
+        oninput="document.getElementById('resize-val').textContent=this.value+'%';updateSizePreview()">
+      <span id="resize-val">100%</span>
+    </div>
+    <div class="size-preview" id="size-preview"></div>
+    <p class="compress-note">
+      WebP 推荐首选：体积最小且保留透明通道 · PNG 无损但体积大 · JPEG 最小但不支持透明
+    </p>
+  </div>
+</div>
+
+<div class="compress-section" style="margin-top:12px">
+  <div class="compress-header">
+    <label>TinyPNG 云端压缩</label>
+    <div class="toggle-wrap">
+      <div class="toggle" id="tiny-toggle" onclick="toggleTiny()">
+        <div class="toggle-knob"></div>
+      </div>
+      <span class="toggle-label" id="tiny-label">关闭</span>
+    </div>
+  </div>
+  <div class="compress-options" id="tiny-options">
+    <div style="display:flex;gap:8px;align-items:center">
+      <input type="text" id="tiny-key" placeholder="粘贴你的 TinyPNG API Key"
+        style="flex:1;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.15);
+        border-radius:6px;color:#fff;font-size:13px;padding:8px 10px;outline:none">
+      <a href="https://tinypng.com/developers" target="_blank"
+        style="font-size:11px;color:rgba(100,180,255,0.7);white-space:nowrap;text-decoration:none">
+        免费获取 →
+      </a>
+    </div>
+    <p class="compress-note" style="margin-top:6px">
+      TinyPNG 免费账号每月可压缩 500 张 · 压缩率约 60-80% · 完全保留透明通道 · 比本地 Canvas 压缩质量更高<br>
+      <span style="color:rgba(255,200,80,0.6)">注意：图片会上传到 TinyPNG 服务器处理，介意隐私请用本地压缩</span>
+    </p>
+    <div id="tiny-status" style="font-size:12px;color:rgba(100,220,140,0.8);min-height:16px"></div>
+  </div>
+</div>
+
+<div class="tip-box">
+  <strong>关于透明背景：</strong>即梦视频通常是黑色背景，选"去除深色背景"变透明，配合 WebP 格式保留透明通道。边缘不干净可用 <strong>remove.bg</strong> 精细处理。
+</div>
+
+<button id="extract-btn" onclick="startExtract()" disabled>上传视频后开始提取</button>
+
+<div id="progress-wrap">
+  <div id="progress-bar-bg"><div id="progress-bar"></div></div>
+  <p id="progress-text">准备中...</p>
+</div>
+
+<div id="preview-section">
+  <div class="preview-header">
+    <span id="frame-count-label"></span>
+    <button id="download-all-btn" onclick="downloadAll()">打包下载全部帧</button>
+  </div>
+  <div id="frames-grid"></div>
+  <div id="bg-remove-section">
+    <button class="remove-btn" onclick="reprocessWithBgRemoval()">重新处理：调整抠图</button>
+    <p class="remove-note">边缘有残留可重试，或上传到 remove.bg 精细处理</p>
+  </div>
+</div>
+
+<video id="work-video"></video>
+<canvas id="work-canvas"></canvas>
+<canvas id="compress-canvas"></canvas>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+let videoFile = null;
+let extractedFrames = [];
+let videoEl = document.getElementById('work-video');
+let canvasEl = document.getElementById('work-canvas');
+let ctx = canvasEl.getContext('2d');
+let compressCanvas = document.getElementById('compress-canvas');
+let compressCtx = compressCanvas.getContext('2d');
+let compressEnabled = false;
+let outputFormat = 'webp';
+let tinyEnabled = false;
+
+function toggleTiny() {
+  tinyEnabled = !tinyEnabled;
+  document.getElementById('tiny-toggle').classList.toggle('on', tinyEnabled);
+  document.getElementById('tiny-label').textContent = tinyEnabled ? '开启' : '关闭';
+  document.getElementById('tiny-options').classList.toggle('visible', tinyEnabled);
+}
+
+async function compressWithTiny(dataURL) {
+  const key = document.getElementById('tiny-key').value.trim();
+  if(!key) {
+    document.getElementById('tiny-status').textContent = '请先填写 API Key';
+    return dataURL;
+  }
+  try {
+    const blob = await (await fetch(dataURL)).blob();
+    const resp = await fetch('https://api.tinify.com/shrink', {
+      method: 'POST',
+      headers: { 'Authorization': 'Basic ' + btoa('api:' + key) },
+      body: blob
+    });
+    if(!resp.ok) {
+      const err = await resp.json();
+      document.getElementById('tiny-status').textContent = '压缩失败：' + (err.message || resp.status);
+      return dataURL;
+    }
+    const json = await resp.json();
+    const compressedResp = await fetch(json.output.url);
+    const compressedBlob = await compressedResp.blob();
+    const ratio = Math.round((1 - json.output.size / json.input.size) * 100);
+    document.getElementById('tiny-status').textContent =
+      `压缩成功 · 节省 ${ratio}% · ${Math.round(json.output.size/1024)}KB`;
+    return await new Promise(res => {
+      const reader = new FileReader();
+      reader.onload = e => res(e.target.result);
+      reader.readAsDataURL(compressedBlob);
+    });
+  } catch(e) {
+    document.getElementById('tiny-status').textContent = '请求失败（检查 Key 或网络）';
+    return dataURL;
+  }
+}
+
+document.getElementById('frame-count').addEventListener('change', function() {
+  document.getElementById('custom-count-wrap').style.display =
+    this.value === 'custom' ? 'block' : 'none';
+});
+
+document.getElementById('drop-zone').addEventListener('dragover', e => {
+  e.preventDefault(); document.getElementById('drop-zone').classList.add('over');
+});
+document.getElementById('drop-zone').addEventListener('dragleave', () => {
+  document.getElementById('drop-zone').classList.remove('over');
+});
+document.getElementById('drop-zone').addEventListener('drop', e => {
+  e.preventDefault(); document.getElementById('drop-zone').classList.remove('over');
+  const f = e.dataTransfer.files[0];
+  if(f && f.type.startsWith('video/')) loadVideo(f);
+});
+
+function handleFile(input) { if(input.files[0]) loadVideo(input.files[0]); }
+
+function loadVideo(file) {
+  videoFile = file;
+  document.getElementById('file-name').textContent = file.name;
+  document.getElementById('extract-btn').disabled = false;
+  document.getElementById('extract-btn').textContent = '开始提取序列帧';
+  videoEl.src = URL.createObjectURL(file);
+  videoEl.onloadedmetadata = updateSizePreview;
+}
+
+function toggleCompress() {
+  compressEnabled = !compressEnabled;
+  document.getElementById('compress-toggle').classList.toggle('on', compressEnabled);
+  document.getElementById('compress-label').textContent = compressEnabled ? '开启' : '关闭';
+  document.getElementById('compress-options').classList.toggle('visible', compressEnabled);
+  updateSizePreview();
+}
+
+function setFormat(fmt, btn) {
+  outputFormat = fmt;
+  document.querySelectorAll('.fmt-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('quality-row').style.display = fmt === 'png' ? 'none' : 'flex';
+  updateSizePreview();
+}
+
+function updateSizePreview() {
+  const el = document.getElementById('size-preview');
+  if(!compressEnabled) { el.textContent = ''; return; }
+  const size = parseInt(document.getElementById('output-size').value);
+  const resize = parseInt(document.getElementById('resize-slider').value) / 100;
+  const quality = parseInt(document.getElementById('quality-slider').value) / 100;
+  const finalSize = Math.round(size * resize);
+  const baseKB = { webp: 35, png: 200, jpeg: 20 };
+  const est = Math.round(baseKB[outputFormat] * (finalSize/800) * (finalSize/800) * (outputFormat==='png'?1:quality));
+  el.textContent = `预估输出：${finalSize}×${finalSize}px · 约 ${est}KB / 帧`;
+}
+
+async function startExtract() {
+  if(!videoFile) return;
+  const sel = document.getElementById('frame-count').value;
+  const totalFrames = sel === 'custom'
+    ? parseInt(document.getElementById('custom-count').value)
+    : parseInt(sel);
+  const outputSize = parseInt(document.getElementById('output-size').value);
+  const bgMode = document.getElementById('bg-mode').value;
+
+  document.getElementById('extract-btn').disabled = true;
+  document.getElementById('progress-wrap').style.display = 'block';
+  document.getElementById('preview-section').style.display = 'none';
+  document.getElementById('frames-grid').innerHTML = '';
+  extractedFrames = [];
+  canvasEl.width = outputSize; canvasEl.height = outputSize;
+
+  await new Promise(res => {
+    videoEl.onloadedmetadata = res;
+    if(videoEl.readyState >= 1) res();
+  });
+
+  const duration = videoEl.duration;
+
+  for(let i = 0; i < totalFrames; i++) {
+    const time = (i / totalFrames) * duration;
+    document.getElementById('progress-bar').style.width = Math.round((i/totalFrames)*100) + '%';
+    document.getElementById('progress-text').textContent =
+      `提取第 ${i+1} / ${totalFrames} 帧${compressEnabled?' · 压缩中':''}...`;
+
+    await seekTo(videoEl, time);
+    drawFrame(outputSize, bgMode);
+
+    const dataURL = compressEnabled
+      ? await compressFrame(outputSize)
+      : canvasEl.toDataURL('image/png');
+
+    const finalURL = tinyEnabled ? await compressWithTiny(dataURL) : dataURL;
+
+    extractedFrames.push({ dataURL: finalURL, index: i });
+    const deg = Math.round((i / totalFrames) * 360);
+    addFrameThumb(finalURL, i, deg);
+    await sleep(30);
+  }
+
+  document.getElementById('progress-bar').style.width = '100%';
+  const totalBytes = extractedFrames.reduce((s,f) => s + Math.round(f.dataURL.length*3/4), 0);
+  document.getElementById('progress-text').textContent =
+    `完成！共 ${totalFrames} 帧 · 总大小约 ${(totalBytes/1024/1024).toFixed(1)}MB`;
+  document.getElementById('preview-section').style.display = 'block';
+  document.getElementById('bg-remove-section').style.display = 'block';
+  document.getElementById('frame-count-label').textContent = `共 ${totalFrames} 帧 · 点击单张可单独下载`;
+  document.getElementById('extract-btn').disabled = false;
+}
+
+async function compressFrame(sourceSize) {
+  const quality = parseInt(document.getElementById('quality-slider').value) / 100;
+  const resize = parseInt(document.getElementById('resize-slider').value) / 100;
+  const finalSize = Math.round(sourceSize * resize);
+  compressCanvas.width = finalSize; compressCanvas.height = finalSize;
+  compressCtx.clearRect(0, 0, finalSize, finalSize);
+  compressCtx.drawImage(canvasEl, 0, 0, finalSize, finalSize);
+  const mime = {webp:'image/webp', png:'image/png', jpeg:'image/jpeg'}[outputFormat];
+  return compressCanvas.toDataURL(mime, outputFormat === 'png' ? undefined : quality);
+}
+
+function seekTo(video, time) {
+  return new Promise(resolve => { video.currentTime = time; video.onseeked = resolve; });
+}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function drawFrame(size, bgMode) {
+  const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
+  const scale = Math.min(size/vw, size/vh);
+  const dw = vw*scale, dh = vh*scale;
+  const dx = (size-dw)/2, dy = (size-dh)/2;
+  ctx.clearRect(0, 0, size, size);
+  ctx.drawImage(videoEl, dx, dy, dw, dh);
+  if(bgMode !== 'keep') removeBackground(ctx, size, bgMode);
+}
+
+function removeBackground(ctx, size, mode) {
+  const imageData = ctx.getImageData(0, 0, size, size);
+  const data = imageData.data;
+  const threshold = 40;
+  for(let i = 0; i < data.length; i += 4) {
+    const brightness = (data[i] + data[i+1] + data[i+2]) / 3;
+    if(mode === 'remove-dark' && brightness < threshold) {
+      data[i+3] = Math.max(0, Math.round(brightness / threshold * 60));
+    } else if(mode === 'remove-light' && brightness > 255 - threshold) {
+      data[i+3] = Math.max(0, Math.round((255 - brightness) / threshold * 60));
+    }
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function getExt() { return compressEnabled ? outputFormat : 'png'; }
+
+function addFrameThumb(dataURL, index, deg) {
+  const item = document.createElement('div');
+  item.className = 'frame-item';
+  item.onclick = () => downloadFrame(dataURL, index, deg);
+  item.innerHTML = `<img src="${dataURL}"><div class="frame-num">${deg}°</div>`;
+  document.getElementById('frames-grid').appendChild(item);
+}
+
+function downloadFrame(dataURL, index, deg) {
+  const a = document.createElement('a');
+  a.href = dataURL;
+  a.download = `badge_${String(deg).padStart(3,'0')}.${getExt()}`;
+  a.click();
+}
+
+async function downloadAll() {
+  const btn = document.getElementById('download-all-btn');
+  btn.textContent = '打包中...'; btn.disabled = true;
+  const zip = new JSZip();
+  const folder = zip.folder('badge_frames');
+  const total = extractedFrames.length;
+  const ext = getExt();
+  extractedFrames.forEach((frame, i) => {
+    const deg = Math.round((i / total) * 360);
+    folder.file(`badge_${String(deg).padStart(3,'0')}.${ext}`, frame.dataURL.split(',')[1], {base64:true});
+  });
+  const blob = await zip.generateAsync({type:'blob'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'badge_frames.zip';
+  a.click();
+  btn.textContent = '打包下载全部帧'; btn.disabled = false;
+}
+
+async function reprocessWithBgRemoval() {
+  const bgMode = document.getElementById('bg-mode').value;
+  const outputSize = parseInt(document.getElementById('output-size').value);
+  document.getElementById('frames-grid').innerHTML = '';
+  extractedFrames = [];
+  const sel = document.getElementById('frame-count').value;
+  const total = parseInt(sel === 'custom' ? document.getElementById('custom-count').value : sel);
+  const duration = videoEl.duration;
+  for(let i = 0; i < total; i++) {
+    const time = (i / total) * duration;
+    await seekTo(videoEl, time);
+    drawFrame(outputSize, bgMode);
+    const dataURL = compressEnabled ? await compressFrame(outputSize) : canvasEl.toDataURL('image/png');
+    const deg = Math.round((i / total) * 360);
+    extractedFrames.push({ dataURL, index: i });
+    addFrameThumb(dataURL, i, deg);
+    await sleep(20);
+  }
+}
+</script>
+</body>
+</html>
