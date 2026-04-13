@@ -83,6 +83,9 @@ h1 { font-size:18px; font-weight:500; color:#fff; margin-bottom:4px; }
 .status-error { background:rgba(255,100,100,0.1); color:rgba(255,120,120,0.8); }
 .queue-dl-btn { font-size:11px; padding:3px 10px; background:rgba(80,200,120,0.15); border:0.5px solid rgba(80,200,120,0.3); border-radius:5px; color:rgba(100,220,140,0.9); cursor:pointer; white-space:nowrap; }
 .queue-dl-btn:disabled { opacity:0.4; cursor:not-allowed; }
+.queue-view-btn { font-size:11px; padding:3px 10px; background:rgba(160,100,255,0.12); border:0.5px solid rgba(160,100,255,0.3); border-radius:5px; color:rgba(180,140,255,0.9); cursor:pointer; white-space:nowrap; }
+.queue-view-btn:disabled { opacity:0.4; cursor:not-allowed; }
+.queue-item.viewing { border-color:rgba(160,100,255,0.4); background:rgba(160,100,255,0.06); }
 #progress-bar-bg { height:4px; background:rgba(255,255,255,0.08); border-radius:2px; overflow:hidden; margin-bottom:8px; }
 #progress-bar { height:100%; background:linear-gradient(90deg,#8040ff,#c080ff); border-radius:2px; width:0%; transition:width 0.15s; }
 #progress-text { font-size:12px; color:rgba(255,255,255,0.35); text-align:center; }
@@ -1286,6 +1289,7 @@ window.handleFiles = function(input) {
     item.innerHTML = `
       <div class="queue-item-name" title="${f.name}">${f.name}</div>
       <div class="queue-item-status status-wait" id="qs-${i}">等待</div>
+      <button class="queue-view-btn" id="qview-${i}" onclick="viewBatchItem(${i})" disabled>查看帧</button>
       <button class="queue-dl-btn" id="qdl-${i}" onclick="downloadBatchItem(${i})" disabled>下载</button>`;
     list.appendChild(item);
   });
@@ -1348,16 +1352,50 @@ window.startBatch = async function() {
       await sleep(10);
     }
 
-    batchResults[bi] = frames;
+    batchResults[bi] = { frames, fileName: file.name };
     statusEl.textContent = `完成 ${total}帧`;
     statusEl.className = 'queue-item-status status-done';
     document.getElementById(`qdl-${bi}`).disabled = false;
+    document.getElementById(`qview-${bi}`).disabled = false;
   }
 
   document.getElementById('progress-bar').style.width = '100%';
   document.getElementById('progress-text').textContent = `全部完成！共 ${batchFiles.length} 个视频`;
   document.getElementById('batch-start-btn').disabled = false;
   document.getElementById('batch-start-btn').textContent = '重新处理';
+  // 自动展示第一个视频的帧（让用户立即能操作）
+  viewBatchItem(0);
+};
+
+// 查看某个批量视频的帧：切换 extractedFrames 并重新渲染卡片
+let currentViewingBatch = -1;
+
+window.viewBatchItem = function(bi) {
+  const result = batchResults[bi];
+  if(!result) return;
+
+  currentViewingBatch = bi;
+  extractedFrames = result.frames;
+  videoFile = batchFiles[bi]; // 让 buildZipName 能拿到正确文件名
+
+  // 高亮当前查看的队列行
+  document.querySelectorAll('.queue-item').forEach((el, i) => {
+    el.classList.toggle('viewing', i === bi);
+  });
+
+  // 渲染帧卡片（完全复用现有逻辑）
+  const grid = document.getElementById('frames-grid');
+  grid.innerHTML = '';
+  const total = result.frames.length;
+  result.frames.forEach((f, i) => {
+    addFrameCard(f.dataURL, i, Math.round(i/total*360));
+  });
+
+  // 更新预览区标题
+  document.getElementById('frame-count-label').textContent =
+    `${result.fileName} · 共${total}帧 · 点击缩略图预览`;
+  document.getElementById('download-all-btn').textContent = '下载此视频全部帧';
+  document.getElementById('preview-section').style.display = 'block';
 };
 
 window.downloadBatchItem = async function(bi) {
