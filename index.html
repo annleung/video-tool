@@ -66,6 +66,23 @@ h1 { font-size:18px; font-weight:500; color:#fff; margin-bottom:4px; }
 #extract-btn:disabled { opacity:0.4; cursor:not-allowed; }
 
 #progress-wrap { display:none; margin-bottom:20px; }
+
+/* 批量队列 */
+#batch-queue { display:none; margin-bottom:16px; }
+.batch-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+.batch-header span { font-size:13px; color:rgba(255,255,255,0.5); }
+#batch-start-btn { font-size:12px; padding:6px 16px; background:rgba(160,100,255,0.2); border:0.5px solid rgba(160,100,255,0.4); border-radius:8px; color:rgba(180,140,255,0.9); cursor:pointer; }
+#batch-start-btn:disabled { opacity:0.4; cursor:not-allowed; }
+.queue-list { display:flex; flex-direction:column; gap:6px; }
+.queue-item { display:flex; align-items:center; gap:10px; padding:8px 12px; background:rgba(255,255,255,0.04); border:0.5px solid rgba(255,255,255,0.08); border-radius:8px; }
+.queue-item-name { flex:1; font-size:12px; color:rgba(255,255,255,0.7); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.queue-item-status { font-size:11px; padding:2px 8px; border-radius:4px; white-space:nowrap; }
+.status-wait { background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.3); }
+.status-processing { background:rgba(100,180,255,0.15); color:rgba(130,200,255,0.9); }
+.status-done { background:rgba(100,220,140,0.15); color:rgba(100,220,140,0.9); }
+.status-error { background:rgba(255,100,100,0.1); color:rgba(255,120,120,0.8); }
+.queue-dl-btn { font-size:11px; padding:3px 10px; background:rgba(80,200,120,0.15); border:0.5px solid rgba(80,200,120,0.3); border-radius:5px; color:rgba(100,220,140,0.9); cursor:pointer; white-space:nowrap; }
+.queue-dl-btn:disabled { opacity:0.4; cursor:not-allowed; }
 #progress-bar-bg { height:4px; background:rgba(255,255,255,0.08); border-radius:2px; overflow:hidden; margin-bottom:8px; }
 #progress-bar { height:100%; background:linear-gradient(90deg,#8040ff,#c080ff); border-radius:2px; width:0%; transition:width 0.15s; }
 #progress-text { font-size:12px; color:rgba(255,255,255,0.35); text-align:center; }
@@ -194,10 +211,10 @@ video,canvas { display:none; }
 <p class="sub">上传旋转视频，自动拆帧 + 智能抠图 → 透明背景序列图</p>
 
 <div id="drop-zone">
-  <input type="file" accept="video/*" onchange="handleFile(this)">
+  <input type="file" accept="video/*" multiple onchange="handleFiles(this)">
   <div class="icon">🎬</div>
   <p>点击或拖拽视频文件到这里</p>
-  <p style="font-size:12px;margin-top:6px;color:rgba(255,255,255,0.2)">支持 MP4 / MOV / WebM</p>
+  <p style="font-size:12px;margin-top:6px;color:rgba(255,255,255,0.2)">支持多选 · MP4 / MOV / WebM</p>
   <p id="file-name"></p>
 </div>
 
@@ -305,6 +322,14 @@ video,canvas { display:none; }
 <div id="progress-wrap">
   <div id="progress-bar-bg"><div id="progress-bar"></div></div>
   <p id="progress-text">准备中...</p>
+</div>
+
+<div id="batch-queue">
+  <div class="batch-header">
+    <span id="batch-count-label">已选 0 个视频</span>
+    <button id="batch-start-btn" onclick="startBatch()" disabled>开始批量处理</button>
+  </div>
+  <div class="queue-list" id="queue-list"></div>
 </div>
 
 <div id="preview-section">
@@ -1197,11 +1222,23 @@ window.downloadSingle = function(index, deg) {
   a.click();
 };
 
+// 生成压缩包文件名：视频名称-尺寸-帧数
+function buildZipName(videoName) {
+  const base = videoName ? videoName.replace(/\.[^.]+$/, '') : 'badge';
+  const size = parseInt(document.getElementById('output-size').value) || 800;
+  const sel  = document.getElementById('frame-count').value;
+  const frames = sel === 'custom'
+    ? (parseInt(document.getElementById('custom-count').value) || 0)
+    : parseInt(sel);
+  return `${base}-${size}-${frames}`;
+}
+
 window.downloadAll = async function() {
   const btn=document.getElementById('download-all-btn');
   btn.textContent='打包中...'; btn.disabled=true;
   const zip=new JSZip();
-  const folder=zip.folder('badge_frames');
+  const zipName = buildZipName(videoFile ? videoFile.name : '');
+  const folder=zip.folder(zipName);
   const total=extractedFrames.length; const ext=getExt();
   extractedFrames.forEach((f,i)=>{
     const deg=Math.round(i/total*360);
@@ -1209,8 +1246,141 @@ window.downloadAll = async function() {
   });
   const blob=await zip.generateAsync({type:'blob'});
   const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob); a.download='badge_frames.zip'; a.click();
+  a.href=URL.createObjectURL(blob);
+  a.download=zipName+'.zip';
+  a.click();
   btn.textContent='打包下载全部帧'; btn.disabled=false;
+};
+
+// ── 批量处理 ──────────────────────────────────
+let batchFiles = [];
+let batchResults = {}; // { index: [{dataURL, originalDataURL}] }
+
+window.handleFiles = function(input) {
+  const files = Array.from(input.files).filter(f => f.type.startsWith('video/'));
+  if(!files.length) return;
+
+  if(files.length === 1) {
+    // 单文件：走原来流程
+    loadVideo(files[0]);
+    document.getElementById('batch-queue').style.display = 'none';
+    return;
+  }
+
+  // 多文件：显示批量队列
+  batchFiles = files;
+  batchResults = {};
+  document.getElementById('batch-queue').style.display = 'block';
+  document.getElementById('batch-count-label').textContent = `已选 ${files.length} 个视频`;
+  document.getElementById('batch-start-btn').disabled = false;
+  document.getElementById('extract-btn').disabled = true;
+  document.getElementById('file-name').textContent = `已选 ${files.length} 个视频文件`;
+
+  const list = document.getElementById('queue-list');
+  list.innerHTML = '';
+  files.forEach((f, i) => {
+    const item = document.createElement('div');
+    item.className = 'queue-item';
+    item.id = `qi-${i}`;
+    const zipName = buildZipNameFromFile(f.name);
+    item.innerHTML = `
+      <div class="queue-item-name" title="${f.name}">${f.name}</div>
+      <div class="queue-item-status status-wait" id="qs-${i}">等待</div>
+      <button class="queue-dl-btn" id="qdl-${i}" onclick="downloadBatchItem(${i})" disabled>下载</button>`;
+    list.appendChild(item);
+  });
+};
+
+function buildZipNameFromFile(fileName) {
+  const base = fileName.replace(/\.[^.]+$/, '');
+  const size = parseInt(document.getElementById('output-size').value) || 800;
+  const sel  = document.getElementById('frame-count').value;
+  const frames = sel === 'custom'
+    ? (parseInt(document.getElementById('custom-count').value) || 0)
+    : parseInt(sel);
+  return `${base}-${size}-${frames}`;
+}
+
+window.startBatch = async function() {
+  document.getElementById('batch-start-btn').disabled = true;
+  document.getElementById('preview-section').style.display = 'none';
+  document.getElementById('progress-wrap').style.display = 'block';
+  document.getElementById('frames-grid').innerHTML = '';
+
+  const sel   = document.getElementById('frame-count').value;
+  const total = sel === 'custom' ? parseInt(document.getElementById('custom-count').value) : parseInt(sel);
+  const size  = parseInt(document.getElementById('output-size').value);
+  const t     = parseInt(document.getElementById('threshold-slider').value) || bgThreshold;
+
+  for(let bi = 0; bi < batchFiles.length; bi++) {
+    const file = batchFiles[bi];
+    const statusEl = document.getElementById(`qs-${bi}`);
+    statusEl.textContent = '处理中...';
+    statusEl.className = 'queue-item-status status-processing';
+
+    // 加载视频
+    videoFile = file;
+    videoEl.src = URL.createObjectURL(file);
+    await new Promise(res => { videoEl.onloadedmetadata = res; if(videoEl.readyState >= 1) res(); });
+
+    workCanvas.width = size; workCanvas.height = size;
+    const dur = videoEl.duration;
+    const frames = [];
+
+    for(let i = 0; i < total; i++) {
+      document.getElementById('progress-bar').style.width = Math.round(i/total*100)+'%';
+      document.getElementById('progress-text').textContent =
+        `[${bi+1}/${batchFiles.length}] ${file.name} · 第 ${i+1}/${total} 帧`;
+
+      await seekTo(videoEl, i/total*dur);
+      const vw=videoEl.videoWidth, vh=videoEl.videoHeight;
+      const scale=Math.min(size/vw,size/vh);
+      workCtx.clearRect(0,0,size,size);
+      workCtx.drawImage(videoEl,(size-vw*scale)/2,(size-vh*scale)/2,vw*scale,vh*scale);
+
+      const originalDataURL = workCanvas.toDataURL('image/png');
+
+      if(bgMode === 'ai') await removeBackgroundRMBG(workCanvas);
+      else if(bgMode === 'dark') removeBackgroundThreshold(workCanvas, 'dark', t);
+
+      const dataURL = compressEnabled ? await compressFrame(workCanvas, size) : workCanvas.toDataURL('image/png');
+      frames.push({ dataURL, originalDataURL });
+      await sleep(10);
+    }
+
+    batchResults[bi] = frames;
+    statusEl.textContent = `完成 ${total}帧`;
+    statusEl.className = 'queue-item-status status-done';
+    document.getElementById(`qdl-${bi}`).disabled = false;
+  }
+
+  document.getElementById('progress-bar').style.width = '100%';
+  document.getElementById('progress-text').textContent = `全部完成！共 ${batchFiles.length} 个视频`;
+  document.getElementById('batch-start-btn').disabled = false;
+  document.getElementById('batch-start-btn').textContent = '重新处理';
+};
+
+window.downloadBatchItem = async function(bi) {
+  const frames = batchResults[bi];
+  if(!frames || !frames.length) return;
+  const btn = document.getElementById(`qdl-${bi}`);
+  btn.textContent = '打包中...'; btn.disabled = true;
+
+  const zip = new JSZip();
+  const zipName = buildZipNameFromFile(batchFiles[bi].name);
+  const folder = zip.folder(zipName);
+  const ext = getExt();
+  frames.forEach((f, i) => {
+    const deg = Math.round(i/frames.length*360);
+    folder.file(`badge_${String(deg).padStart(3,'0')}.${ext}`, f.dataURL.split(',')[1], {base64:true});
+  });
+  const blob = await zip.generateAsync({type:'blob'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = zipName + '.zip';
+  a.click();
+
+  btn.textContent = '下载'; btn.disabled = false;
 };
 
 // ── UI控制 ────────────────────────────────────
@@ -1227,7 +1397,14 @@ document.getElementById('drop-zone').addEventListener('dragover',e=>{e.preventDe
 document.getElementById('drop-zone').addEventListener('dragleave',()=>document.getElementById('drop-zone').classList.remove('over'));
 document.getElementById('drop-zone').addEventListener('drop',e=>{
   e.preventDefault();document.getElementById('drop-zone').classList.remove('over');
-  const f=e.dataTransfer.files[0];if(f&&f.type.startsWith('video/'))loadVideo(f);
+  const files = Array.from(e.dataTransfer.files).filter(f=>f.type.startsWith('video/'));
+  if(!files.length) return;
+  if(files.length === 1) { loadVideo(files[0]); return; }
+  // 多文件：模拟handleFiles
+  const dt = new DataTransfer();
+  files.forEach(f => dt.items.add(f));
+  const fakeInput = { files: dt.files };
+  window.handleFiles(fakeInput);
 });
 document.getElementById('frame-count').addEventListener('change',function(){
   document.getElementById('custom-count-wrap').style.display=this.value==='custom'?'block':'none';
