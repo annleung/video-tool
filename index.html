@@ -330,7 +330,13 @@ video,canvas { display:none; }
 <div id="batch-queue">
   <div class="batch-header">
     <span id="batch-count-label">已选 0 个视频</span>
-    <button id="batch-start-btn" onclick="startBatch()" disabled>开始批量处理</button>
+    <div style="display:flex;gap:8px">
+      <button id="batch-dl-all-btn" onclick="downloadAllBatch()" disabled
+        style="font-size:12px;padding:6px 14px;background:rgba(80,200,120,0.15);border:0.5px solid rgba(80,200,120,0.3);border-radius:8px;color:rgba(100,220,140,0.9);cursor:pointer;">
+        批量下载全部
+      </button>
+      <button id="batch-start-btn" onclick="startBatch()" disabled>开始批量处理</button>
+    </div>
   </div>
   <div class="queue-list" id="queue-list"></div>
 </div>
@@ -1363,6 +1369,7 @@ window.startBatch = async function() {
   document.getElementById('progress-text').textContent = `全部完成！共 ${batchFiles.length} 个视频`;
   document.getElementById('batch-start-btn').disabled = false;
   document.getElementById('batch-start-btn').textContent = '重新处理';
+  document.getElementById('batch-dl-all-btn').disabled = false;
   // 自动展示第一个视频的帧（让用户立即能操作）
   viewBatchItem(0);
 };
@@ -1398,27 +1405,80 @@ window.viewBatchItem = function(bi) {
   document.getElementById('preview-section').style.display = 'block';
 };
 
-window.downloadBatchItem = async function(bi) {
-  const frames = batchResults[bi];
-  if(!frames || !frames.length) return;
-  const btn = document.getElementById(`qdl-${bi}`);
-  btn.textContent = '打包中...'; btn.disabled = true;
-
+// 单个视频打包下载
+async function packBatchItem(bi) {
+  const result = batchResults[bi];
+  if(!result || !result.frames || !result.frames.length) return null;
   const zip = new JSZip();
   const zipName = buildZipNameFromFile(batchFiles[bi].name);
   const folder = zip.folder(zipName);
   const ext = getExt();
-  frames.forEach((f, i) => {
-    const deg = Math.round(i/frames.length*360);
+  result.frames.forEach((f, i) => {
+    const deg = Math.round(i / result.frames.length * 360);
     folder.file(`badge_${String(deg).padStart(3,'0')}.${ext}`, f.dataURL.split(',')[1], {base64:true});
   });
   const blob = await zip.generateAsync({type:'blob'});
+  return { blob, zipName };
+}
+
+window.downloadBatchItem = async function(bi) {
+  const result = batchResults[bi];
+  if(!result || !result.frames || !result.frames.length) return;
+  const btn = document.getElementById(`qdl-${bi}`);
+  btn.textContent = '打包中...'; btn.disabled = true;
+  const packed = await packBatchItem(bi);
+  if(packed) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(packed.blob);
+    a.download = packed.zipName + '.zip';
+    a.click();
+  }
+  btn.textContent = '下载'; btn.disabled = false;
+};
+
+// 批量下载全部（每个视频一个zip，打包成一个总zip）
+window.downloadAllBatch = async function() {
+  const btn = document.getElementById('batch-dl-all-btn');
+  btn.textContent = '打包中...'; btn.disabled = true;
+
+  const doneKeys = Object.keys(batchResults).filter(k => batchResults[k] && batchResults[k].frames && batchResults[k].frames.length);
+  if(!doneKeys.length) { btn.textContent = '批量下载全部'; btn.disabled = false; return; }
+
+  // 如果只有1个直接下载单个
+  if(doneKeys.length === 1) {
+    const packed = await packBatchItem(parseInt(doneKeys[0]));
+    if(packed) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(packed.blob);
+      a.download = packed.zipName + '.zip';
+      a.click();
+    }
+    btn.textContent = '批量下载全部'; btn.disabled = false;
+    return;
+  }
+
+  // 多个：打进一个总zip，每个子文件夹对应一个视频
+  const masterZip = new JSZip();
+  for(const k of doneKeys) {
+    const bi = parseInt(k);
+    const result = batchResults[bi];
+    const zipName = buildZipNameFromFile(batchFiles[bi].name);
+    const folder = masterZip.folder(zipName);
+    const ext = getExt();
+    result.frames.forEach((f, i) => {
+      const deg = Math.round(i / result.frames.length * 360);
+      folder.file(`badge_${String(deg).padStart(3,'0')}.${ext}`, f.dataURL.split(',')[1], {base64:true});
+    });
+    btn.textContent = `打包中 ${parseInt(k)+1}/${doneKeys.length}...`;
+    await new Promise(r => setTimeout(r, 10));
+  }
+
+  const blob = await masterZip.generateAsync({type:'blob'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = zipName + '.zip';
+  a.download = `batch_${doneKeys.length}videos.zip`;
   a.click();
-
-  btn.textContent = '下载'; btn.disabled = false;
+  btn.textContent = '批量下载全部'; btn.disabled = false;
 };
 
 // ── UI控制 ────────────────────────────────────
