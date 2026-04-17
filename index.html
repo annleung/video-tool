@@ -246,6 +246,13 @@ video,canvas { display:none; }
     <label>自定义帧数</label>
     <input type="number" id="custom-count" value="18" min="4" max="120">
   </div>
+  <div class="setting-item" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="toggleReverse()">
+    <label style="cursor:pointer;margin-bottom:0">反转帧顺序</label>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span id="reverse-label" style="font-size:12px;color:rgba(255,255,255,0.3)">关闭</span>
+      <div class="toggle" id="reverse-toggle"><div class="toggle-knob"></div></div>
+    </div>
+  </div>
 </div>
 
 <div class="section">
@@ -263,7 +270,7 @@ video,canvas { display:none; }
       <input type="radio" name="bg" value="ai">
       <div class="bg-opt-body">
         <div class="bg-opt-title">AI 智能抠图</div>
-        <div class="bg-opt-desc">专用前景提取模型，适合复杂背景。首次需下载模型约20MB。</div>
+        <div class="bg-opt-desc">专用前景提取模型，适合复杂背景。选择后按需下载约20MB，网络不佳时建议用深色背景去除。</div>
       </div>
       <span class="badge badge-ai">精准</span>
     </label>
@@ -428,11 +435,15 @@ video,canvas { display:none; }
 import { AutoModel, AutoProcessor, env, RawImage } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1/dist/transformers.min.js';
 
 env.allowLocalModels = false;
+// 国内镜像：优先用hf-mirror.com，访问不到时自动fallback到官方
+env.remoteHost = 'https://hf-mirror.com';
+env.remotePathTemplate = '{model}/{revision}/{path}';
 
 // ── 状态 ──────────────────────────────────────
 let videoFile = null;
 let extractedFrames = [];   // [{dataURL, originalDataURL}]
 let bgMode = 'dark';
+let reverseFrames = false; // 是否反转帧顺序
 let bgThreshold = 55; // 洪水填充容差，用户可调
 let compressEnabled = false;
 let outputFormat = 'webp';
@@ -460,34 +471,57 @@ const editorCtx      = editorCanvas.getContext('2d');
 
 // ── 加载RMBG模型 ──────────────────────────────
 async function loadAIModel() {
+  if(modelLoading || aiModel) return;
   modelLoading = true;
   const st = document.getElementById('model-status');
   st.style.display = 'block';
   st.className = 'loading';
-  st.textContent = '正在下载AI抠图模型（约20MB，仅首次需要）...';
-  try {
-    aiModel = await AutoModel.from_pretrained('briaai/RMBG-1.4', {
-      config: { model_type: 'custom' },
-      progress_callback: p => {
-        if(p.status === 'downloading') {
-          const pct = p.progress ? Math.round(p.progress) : 0;
-          st.textContent = `下载模型 ${pct}%...`;
-        }
-      }
-    });
-    aiProcessor = await AutoProcessor.from_pretrained('briaai/RMBG-1.4', {
-      config: { do_normalize: true, do_pad: false, do_rescale: true, do_resize: true,
-        image_mean:[0.5,0.5,0.5], image_std:[1,1,1],
-        resample:2, rescale_factor:0.00392156862745098, size:{width:1024,height:1024} }
-    });
-    st.className = 'ready';
-    st.textContent = '✓ AI模型已就绪，可以开始提取';
-  } catch(e) {
-    st.className = 'error';
-    st.textContent = `模型加载失败，将使用亮度抠图。错误：${e.message}`;
-    bgMode = 'dark';
+
+  const progressCb = p => {
+    if(p.status === 'downloading') {
+      const pct = p.progress ? Math.round(p.progress) : 0;
+      st.textContent = `下载模型 ${pct}%...`;
+    }
+  };
+
+  const processorConfig = {
+    config: { do_normalize:true, do_pad:false, do_rescale:true, do_resize:true,
+      image_mean:[0.5,0.5,0.5], image_std:[1,1,1],
+      resample:2, rescale_factor:0.00392156862745098, size:{width:1024,height:1024} }
+  };
+
+  // 尝试顺序：① hf-mirror（国内）② 官方HuggingFace
+  const sources = [
+    { host: 'https://hf-mirror.com', label: '国内镜像' },
+    { host: 'https://huggingface.co', label: '官方源' },
+  ];
+
+  for(const src of sources) {
+    try {
+      st.textContent = `连接${src.label}，下载AI模型...`;
+      env.remoteHost = src.host;
+      aiModel = await AutoModel.from_pretrained('briaai/RMBG-1.4', {
+        config: { model_type: 'custom' },
+        progress_callback: progressCb
+      });
+      aiProcessor = await AutoProcessor.from_pretrained('briaai/RMBG-1.4', processorConfig);
+      st.className = 'ready';
+      st.textContent = `✓ AI模型已就绪（${src.label}）`;
+      modelLoading = false;
+      return;
+    } catch(e) {
+      console.warn(`${src.label}加载失败:`, e.message);
+      aiModel = null; aiProcessor = null;
+    }
   }
+
+  // 全部失败
+  st.className = 'error';
+  st.textContent = '模型下载失败（网络不可用）。请使用"去除深色背景"模式。';
   modelLoading = false;
+  // 自动切回深色背景模式
+  const darkOpt = document.querySelector('.bg-option[onclick*="dark"]');
+  if(darkOpt) { bgMode = 'dark'; darkOpt.click(); }
 }
 
 // ── RMBG AI 抠图核心（含边缘平滑）────────────
@@ -649,11 +683,25 @@ window.startExtract = async function() {
     await sleep(10);
   }
 
+  // 反转帧顺序
+  if(reverseFrames) {
+    extractedFrames.reverse();
+  }
+
   document.getElementById('progress-bar').style.width='100%';
   const totalB = extractedFrames.reduce((s,f)=>s+Math.round(f.dataURL.length*3/4),0);
   document.getElementById('progress-text').textContent = `完成！共${total}帧 · 约${(totalB/1024/1024).toFixed(1)}MB`;
+
+  // 反转后重新渲染卡片（角度从0重新排）
+  if(reverseFrames) {
+    document.getElementById('frames-grid').innerHTML = '';
+    extractedFrames.forEach((f, i) => {
+      addFrameCard(f.dataURL, i, Math.round(i/total*360));
+    });
+  }
+
   document.getElementById('preview-section').style.display='block';
-  document.getElementById('frame-count-label').textContent = `共${total}帧 · 点击缩略图下载单帧`;
+  document.getElementById('frame-count-label').textContent = `共${total}帧${reverseFrames?' · 已反转顺序':''} · 点击缩略图下载单帧`;
   document.getElementById('extract-btn').disabled=false;
 };
 
@@ -1358,6 +1406,8 @@ window.startBatch = async function() {
       await sleep(10);
     }
 
+    // 批量模式也支持反转
+    if(reverseFrames) frames.reverse();
     batchResults[bi] = { frames, fileName: file.name };
     statusEl.textContent = `完成 ${total}帧`;
     statusEl.className = 'queue-item-status status-done';
@@ -1508,6 +1558,14 @@ document.getElementById('frame-count').addEventListener('change',function(){
   document.getElementById('custom-count-wrap').style.display=this.value==='custom'?'block':'none';
 });
 
+window.toggleReverse = function() {
+  reverseFrames = !reverseFrames;
+  document.getElementById('reverse-toggle').classList.toggle('on', reverseFrames);
+  document.getElementById('reverse-label').textContent = reverseFrames ? '开启' : '关闭';
+  document.getElementById('reverse-label').style.color = reverseFrames
+    ? 'rgba(100,180,255,0.8)' : 'rgba(255,255,255,0.3)';
+};
+
 window.selectBgMode = function(mode, el) {
   bgMode=mode;
   document.querySelectorAll('.bg-option').forEach(o=>o.classList.remove('selected'));
@@ -1533,7 +1591,7 @@ window.setFormat = function(fmt,btn){
 
 brushCursor.style.display = 'none';
 updateBrushCursor();
-loadAIModel();
+// AI模型按需加载：用户选择AI模式时才下载，不在页面打开时自动加载
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </body>
